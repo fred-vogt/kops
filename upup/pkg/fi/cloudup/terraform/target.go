@@ -25,10 +25,12 @@ import (
 	"strings"
 	"sync"
 
-	hcl_parser "github.com/hashicorp/hcl/json/parser"
+	hcl1_parser "github.com/hashicorp/hcl/json/parser"
+
 	"k8s.io/klog"
 	"k8s.io/kops/pkg/apis/kops"
 	"k8s.io/kops/upup/pkg/fi"
+	"k8s.io/kops/pkg/featureflag"
 )
 
 type TerraformTarget struct {
@@ -255,9 +257,15 @@ func (t *TerraformTarget) Finish(taskMap map[string]fi.Task) error {
 		}
 	}
 
-	// See https://github.com/kubernetes/kops/pull/2424 for why we require 0.9.3
 	terraformConfiguration := make(map[string]interface{})
-	terraformConfiguration["required_version"] = ">= 0.9.3"
+	if featureflag.Terraform012.Enabled() {
+		// TF 12 / HCL2 is not the default yet
+		klog.Infof("feature-flag Terraform012 was set; terraform required_version >= 0.12.0")
+		terraformConfiguration["required_version"] = ">= 0.12.0"
+	} else {
+		// See https://github.com/kubernetes/kops/pull/2424 for why we require 0.9.3
+		terraformConfiguration["required_version"] = ">= 0.9.3"
+	}
 
 	data := make(map[string]interface{})
 	data["terraform"] = terraformConfiguration
@@ -282,17 +290,28 @@ func (t *TerraformTarget) Finish(taskMap map[string]fi.Task) error {
 	if useJson {
 		t.files["kubernetes.tf"] = jsonBytes
 	} else {
-		f, err := hcl_parser.Parse(jsonBytes)
+		node, err := hcl1_parser.Parse(jsonBytes)
 		if err != nil {
 			return fmt.Errorf("error parsing terraform json: %v", err)
 		}
 
-		b, err := hclPrint(f)
-		if err != nil {
-			return fmt.Errorf("error writing terraform data to output: %v", err)
-		}
+		if featureflag.Terraform012.Enabled() {
+			klog.Infof("feature-flag Terraform012 was set; generating tf 0.12 output")
 
-		t.files["kubernetes.tf"] = b
+			b, err := hcl2Print(node)
+			if err != nil {
+				return fmt.Errorf("error writing terraform data to output: %v", err)
+			}
+
+			t.files["kubernetes.tf"] = b
+		} else {
+			b, err := hcl1Print(node)
+			if err != nil {
+				return fmt.Errorf("error writing terraform data to output: %v", err)
+			}
+
+			t.files["kubernetes.tf"] = b
+		}
 	}
 
 	for relativePath, contents := range t.files {

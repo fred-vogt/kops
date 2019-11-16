@@ -32,6 +32,8 @@ import (
 	"k8s.io/kops/upup/pkg/fi/cloudup/cloudformation"
 	"k8s.io/kops/upup/pkg/fi/cloudup/terraform"
 	"k8s.io/kops/util/pkg/slice"
+	"k8s.io/kops/util/pkg/maps"
+	"k8s.io/kops/pkg/featureflag"
 )
 
 // LoadBalancer manages an ELB.  We find the existing ELB using the Name tag.
@@ -647,6 +649,31 @@ func (_ *LoadBalancer) RenderAWS(t *awsup.AWSAPITarget, a, e, changes *LoadBalan
 	return nil
 }
 
+type terraform12LoadBalancerTag struct {
+	Key   *string `json:"key"`
+	Value *string `json:"value"`
+}
+
+type terraform12LoadBalancer struct {
+	LoadBalancerName *string                          `json:"name"`
+	Listener         []*terraformLoadBalancerListener `json:"listener"`
+	SecurityGroups   []*terraform.Literal             `json:"security_groups"`
+	Subnets          []*terraform.Literal             `json:"subnets"`
+	Internal         *bool                            `json:"internal,omitempty"`
+
+	HealthCheck *terraformLoadBalancerHealthCheck `json:"health_check,omitempty"`
+	AccessLog   *terraformLoadBalancerAccessLog   `json:"access_logs,omitempty"`
+
+	ConnectionDraining        *bool  `json:"connection_draining,omitempty"`
+	ConnectionDrainingTimeout *int64 `json:"connection_draining_timeout,omitempty"`
+
+	CrossZoneLoadBalancing *bool `json:"cross_zone_load_balancing,omitempty"`
+
+	IdleTimeout *int64 `json:"idle_timeout,omitempty"`
+
+	Tags []*terraform12LoadBalancerTag `json:"tag,omitempty"`
+}
+
 type terraformLoadBalancer struct {
 	LoadBalancerName *string                          `json:"name"`
 	Listener         []*terraformLoadBalancerListener `json:"listener"`
@@ -690,87 +717,177 @@ func (_ *LoadBalancer) RenderTerraform(t *terraform.TerraformTarget, a, e, chang
 		return fi.RequiredField("LoadBalancerName")
 	}
 
-	tf := &terraformLoadBalancer{
-		LoadBalancerName: e.LoadBalancerName,
-	}
-	if fi.StringValue(e.Scheme) == "internal" {
-		tf.Internal = fi.Bool(true)
-	}
-
-	for _, subnet := range e.Subnets {
-		tf.Subnets = append(tf.Subnets, subnet.TerraformLink())
-	}
-	terraform.SortLiterals(tf.Subnets)
-
-	for _, sg := range e.SecurityGroups {
-		tf.SecurityGroups = append(tf.SecurityGroups, sg.TerraformLink())
-	}
-	terraform.SortLiterals(tf.SecurityGroups)
-
-	for loadBalancerPort, listener := range e.Listeners {
-		loadBalancerPortInt, err := strconv.ParseInt(loadBalancerPort, 10, 64)
-		if err != nil {
-			return fmt.Errorf("error parsing load balancer listener port: %q", loadBalancerPort)
+	if featureflag.Terraform012.Enabled() {
+		tf := &terraform12LoadBalancer{
+			LoadBalancerName: e.LoadBalancerName,
+		}
+		if fi.StringValue(e.Scheme) == "internal" {
+			tf.Internal = fi.Bool(true)
 		}
 
-		if listener.SSLCertificateID != "" {
-			tf.Listener = append(tf.Listener, &terraformLoadBalancerListener{
-				InstanceProtocol: "SSL",
-				InstancePort:     listener.InstancePort,
-				LBPort:           loadBalancerPortInt,
-				LBProtocol:       "SSL",
-				SSLCertificateID: listener.SSLCertificateID,
+		for _, subnet := range e.Subnets {
+			tf.Subnets = append(tf.Subnets, subnet.TerraformLink())
+		}
+		terraform.SortLiterals(tf.Subnets)
+
+		for _, sg := range e.SecurityGroups {
+			tf.SecurityGroups = append(tf.SecurityGroups, sg.TerraformLink())
+		}
+		terraform.SortLiterals(tf.SecurityGroups)
+
+		for loadBalancerPort, listener := range e.Listeners {
+			loadBalancerPortInt, err := strconv.ParseInt(loadBalancerPort, 10, 64)
+			if err != nil {
+				return fmt.Errorf("error parsing load balancer listener port: %q", loadBalancerPort)
+			}
+
+			if listener.SSLCertificateID != "" {
+				tf.Listener = append(tf.Listener, &terraformLoadBalancerListener{
+					InstanceProtocol: "SSL",
+					InstancePort:     listener.InstancePort,
+					LBPort:           loadBalancerPortInt,
+					LBProtocol:       "SSL",
+					SSLCertificateID: listener.SSLCertificateID,
+				})
+			} else {
+				tf.Listener = append(tf.Listener, &terraformLoadBalancerListener{
+					InstanceProtocol: "TCP",
+					InstancePort:     listener.InstancePort,
+					LBPort:           loadBalancerPortInt,
+					LBProtocol:       "TCP",
+				})
+			}
+
+		}
+
+		if e.HealthCheck != nil {
+			tf.HealthCheck = &terraformLoadBalancerHealthCheck{
+				Target:             e.HealthCheck.Target,
+				HealthyThreshold:   e.HealthCheck.HealthyThreshold,
+				UnhealthyThreshold: e.HealthCheck.UnhealthyThreshold,
+				Interval:           e.HealthCheck.Interval,
+				Timeout:            e.HealthCheck.Timeout,
+			}
+		}
+
+		if e.AccessLog != nil {
+			tf.AccessLog = &terraformLoadBalancerAccessLog{
+				EmitInterval:   e.AccessLog.EmitInterval,
+				Enabled:        e.AccessLog.Enabled,
+				S3BucketName:   e.AccessLog.S3BucketName,
+				S3BucketPrefix: e.AccessLog.S3BucketPrefix,
+			}
+		}
+
+		if e.ConnectionDraining != nil {
+			tf.ConnectionDraining = e.ConnectionDraining.Enabled
+			tf.ConnectionDrainingTimeout = e.ConnectionDraining.Timeout
+		}
+
+		if e.ConnectionSettings != nil {
+			tf.IdleTimeout = e.ConnectionSettings.IdleTimeout
+		}
+
+		if e.CrossZoneLoadBalancing != nil {
+			tf.CrossZoneLoadBalancing = e.CrossZoneLoadBalancing.Enabled
+		}
+
+		var tags map[string]string = cloud.BuildTags(e.Name)
+		for k, v := range e.Tags {
+			tags[k] = v
+		}
+		for _, k := range maps.SortedKeys(tags) {
+			v := tags[k]
+			tf.Tags = append(tf.Tags, &terraform12LoadBalancerTag{
+				Key:   fi.String(k),
+				Value: fi.String(v),
 			})
-		} else {
-			tf.Listener = append(tf.Listener, &terraformLoadBalancerListener{
-				InstanceProtocol: "TCP",
-				InstancePort:     listener.InstancePort,
-				LBPort:           loadBalancerPortInt,
-				LBProtocol:       "TCP",
-			})
 		}
 
-	}
-
-	if e.HealthCheck != nil {
-		tf.HealthCheck = &terraformLoadBalancerHealthCheck{
-			Target:             e.HealthCheck.Target,
-			HealthyThreshold:   e.HealthCheck.HealthyThreshold,
-			UnhealthyThreshold: e.HealthCheck.UnhealthyThreshold,
-			Interval:           e.HealthCheck.Interval,
-			Timeout:            e.HealthCheck.Timeout,
+		return t.RenderResource("aws_elb", *e.Name, tf)
+	} else {
+		tf := &terraformLoadBalancer{
+			LoadBalancerName: e.LoadBalancerName,
 		}
-	}
-
-	if e.AccessLog != nil {
-		tf.AccessLog = &terraformLoadBalancerAccessLog{
-			EmitInterval:   e.AccessLog.EmitInterval,
-			Enabled:        e.AccessLog.Enabled,
-			S3BucketName:   e.AccessLog.S3BucketName,
-			S3BucketPrefix: e.AccessLog.S3BucketPrefix,
+		if fi.StringValue(e.Scheme) == "internal" {
+			tf.Internal = fi.Bool(true)
 		}
-	}
 
-	if e.ConnectionDraining != nil {
-		tf.ConnectionDraining = e.ConnectionDraining.Enabled
-		tf.ConnectionDrainingTimeout = e.ConnectionDraining.Timeout
-	}
+		for _, subnet := range e.Subnets {
+			tf.Subnets = append(tf.Subnets, subnet.TerraformLink())
+		}
+		terraform.SortLiterals(tf.Subnets)
 
-	if e.ConnectionSettings != nil {
-		tf.IdleTimeout = e.ConnectionSettings.IdleTimeout
-	}
+		for _, sg := range e.SecurityGroups {
+			tf.SecurityGroups = append(tf.SecurityGroups, sg.TerraformLink())
+		}
+		terraform.SortLiterals(tf.SecurityGroups)
 
-	if e.CrossZoneLoadBalancing != nil {
-		tf.CrossZoneLoadBalancing = e.CrossZoneLoadBalancing.Enabled
-	}
+		for loadBalancerPort, listener := range e.Listeners {
+			loadBalancerPortInt, err := strconv.ParseInt(loadBalancerPort, 10, 64)
+			if err != nil {
+				return fmt.Errorf("error parsing load balancer listener port: %q", loadBalancerPort)
+			}
 
-	var tags map[string]string = cloud.BuildTags(e.Name)
-	for k, v := range e.Tags {
-		tags[k] = v
-	}
-	tf.Tags = tags
+			if listener.SSLCertificateID != "" {
+				tf.Listener = append(tf.Listener, &terraformLoadBalancerListener{
+					InstanceProtocol: "SSL",
+					InstancePort:     listener.InstancePort,
+					LBPort:           loadBalancerPortInt,
+					LBProtocol:       "SSL",
+					SSLCertificateID: listener.SSLCertificateID,
+				})
+			} else {
+				tf.Listener = append(tf.Listener, &terraformLoadBalancerListener{
+					InstanceProtocol: "TCP",
+					InstancePort:     listener.InstancePort,
+					LBPort:           loadBalancerPortInt,
+					LBProtocol:       "TCP",
+				})
+			}
 
-	return t.RenderResource("aws_elb", *e.Name, tf)
+		}
+
+		if e.HealthCheck != nil {
+			tf.HealthCheck = &terraformLoadBalancerHealthCheck{
+				Target:             e.HealthCheck.Target,
+				HealthyThreshold:   e.HealthCheck.HealthyThreshold,
+				UnhealthyThreshold: e.HealthCheck.UnhealthyThreshold,
+				Interval:           e.HealthCheck.Interval,
+				Timeout:            e.HealthCheck.Timeout,
+			}
+		}
+
+		if e.AccessLog != nil {
+			tf.AccessLog = &terraformLoadBalancerAccessLog{
+				EmitInterval:   e.AccessLog.EmitInterval,
+				Enabled:        e.AccessLog.Enabled,
+				S3BucketName:   e.AccessLog.S3BucketName,
+				S3BucketPrefix: e.AccessLog.S3BucketPrefix,
+			}
+		}
+
+		if e.ConnectionDraining != nil {
+			tf.ConnectionDraining = e.ConnectionDraining.Enabled
+			tf.ConnectionDrainingTimeout = e.ConnectionDraining.Timeout
+		}
+
+		if e.ConnectionSettings != nil {
+			tf.IdleTimeout = e.ConnectionSettings.IdleTimeout
+		}
+
+		if e.CrossZoneLoadBalancing != nil {
+			tf.CrossZoneLoadBalancing = e.CrossZoneLoadBalancing.Enabled
+		}
+
+		var tags map[string]string = cloud.BuildTags(e.Name)
+		for k, v := range e.Tags {
+			tags[k] = v
+		}
+		tf.Tags = tags
+
+		return t.RenderResource("aws_elb", *e.Name, tf)
+	}
 }
 
 func (e *LoadBalancer) TerraformLink(params ...string) *terraform.Literal {

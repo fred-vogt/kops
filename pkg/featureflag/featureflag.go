@@ -72,6 +72,8 @@ var (
 	// In particular, this is the only (?) way to grant the bucket.list permission
 	// It allows for experiments with alternative DNS configurations - in particular local proxies.
 	SkipTerraformFormat = New("SkipTerraformFormat", Bool(false))
+	// Enable TF 0.12.x update -target=terraform output
+	Terraform012 = New("Terraform012", Bool(false))
 	// SpecOverrideFlag allows setting spec values on create
 	SpecOverrideFlag = New("SpecOverrideFlag", Bool(false))
 	// Spotinst toggles the use of Spotinst integration.

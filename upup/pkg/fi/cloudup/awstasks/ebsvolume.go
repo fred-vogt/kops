@@ -23,6 +23,8 @@ import (
 	"k8s.io/kops/upup/pkg/fi/cloudup/awsup"
 	"k8s.io/kops/upup/pkg/fi/cloudup/cloudformation"
 	"k8s.io/kops/upup/pkg/fi/cloudup/terraform"
+	"k8s.io/kops/util/pkg/maps"
+	"k8s.io/kops/pkg/featureflag"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
@@ -196,6 +198,21 @@ func (e *EBSVolume) getEBSVolumeTagsToDelete(currentTags map[string]string) map[
 	return tagsToDelete
 }
 
+type terraform12EbsVolumeTag struct {
+	Key   *string `json:"key"`
+	Value *string `json:"value"`
+}
+
+type terraform12Volume struct {
+	AvailabilityZone *string                     `json:"availability_zone,omitempty"`
+	Size             *int64                      `json:"size,omitempty"`
+	Type             *string                     `json:"type,omitempty"`
+	Iops             *int64                      `json:"iops,omitempty"`
+	KmsKeyId         *string                     `json:"kms_key_id,omitempty"`
+	Encrypted        *bool                       `json:"encrypted,omitempty"`
+	Tags             []*terraform12EbsVolumeTag  `json:"tag,omitempty"`
+}
+
 type terraformVolume struct {
 	AvailabilityZone *string           `json:"availability_zone,omitempty"`
 	Size             *int64            `json:"size,omitempty"`
@@ -207,17 +224,36 @@ type terraformVolume struct {
 }
 
 func (_ *EBSVolume) RenderTerraform(t *terraform.TerraformTarget, a, e, changes *EBSVolume) error {
-	tf := &terraformVolume{
-		AvailabilityZone: e.AvailabilityZone,
-		Size:             e.SizeGB,
-		Type:             e.VolumeType,
-		Iops:             e.VolumeIops,
-		KmsKeyId:         e.KmsKeyId,
-		Encrypted:        e.Encrypted,
-		Tags:             e.Tags,
-	}
+	if featureflag.Terraform012.Enabled() {
+		tf := &terraform12Volume{
+			AvailabilityZone: e.AvailabilityZone,
+			Size:             e.SizeGB,
+			Type:             e.VolumeType,
+			Iops:             e.VolumeIops,
+			KmsKeyId:         e.KmsKeyId,
+			Encrypted:        e.Encrypted,
+		}
+		for _, k := range maps.SortedKeys(e.Tags) {
+			v := e.Tags[k]
+			tf.Tags = append(tf.Tags, &terraform12EbsVolumeTag{
+				Key:   fi.String(k),
+				Value: fi.String(v),
+			})
+		}
+		return t.RenderResource("aws_ebs_volume", *e.Name, tf)
+	} else {
+		tf := &terraformVolume{
+			AvailabilityZone: e.AvailabilityZone,
+			Size:             e.SizeGB,
+			Type:             e.VolumeType,
+			Iops:             e.VolumeIops,
+			KmsKeyId:         e.KmsKeyId,
+			Encrypted:        e.Encrypted,
+			Tags:             e.Tags,
+		}
 
-	return t.RenderResource("aws_ebs_volume", *e.Name, tf)
+		return t.RenderResource("aws_ebs_volume", *e.Name, tf)
+	}
 }
 
 func (e *EBSVolume) TerraformLink() *terraform.Literal {

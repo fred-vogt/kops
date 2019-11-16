@@ -28,6 +28,8 @@ import (
 	"k8s.io/kops/upup/pkg/fi/cloudup/awsup"
 	"k8s.io/kops/upup/pkg/fi/cloudup/cloudformation"
 	"k8s.io/kops/upup/pkg/fi/cloudup/terraform"
+	"k8s.io/kops/util/pkg/maps"
+	"k8s.io/kops/pkg/featureflag"
 )
 
 //go:generate fitask -type=SecurityGroup
@@ -182,6 +184,18 @@ func (_ *SecurityGroup) RenderAWS(t *awsup.AWSAPITarget, a, e, changes *Security
 	return t.AddAWSTags(*e.ID, e.Tags)
 }
 
+type terraform12SecurityGroupTag struct {
+	Key   *string `json:"key"`
+	Value *string `json:"value"`
+}
+
+type terraform12SecurityGroup struct {
+	Name        *string                         `json:"name"`
+	VPCID       *terraform.Literal              `json:"vpc_id"`
+	Description *string                         `json:"description"`
+	Tags        []*terraform12SecurityGroupTag  `json:"tag,omitempty"`
+}
+
 type terraformSecurityGroup struct {
 	Name        *string            `json:"name"`
 	VPCID       *terraform.Literal `json:"vpc_id"`
@@ -195,15 +209,32 @@ func (_ *SecurityGroup) RenderTerraform(t *terraform.TerraformTarget, a, e, chan
 		// Not terraform owned / managed
 		return nil
 	}
+	
+	if featureflag.Terraform012.Enabled() {
+		tf := &terraform12SecurityGroup{
+			Name:        e.Name,
+			VPCID:       e.VPC.TerraformLink(),
+			Description: e.Description,
+		}
+		for _, k := range maps.SortedKeys(e.Tags) {
+			v := e.Tags[k]
+			tf.Tags = append(tf.Tags, &terraform12SecurityGroupTag{
+				Key:   fi.String(k),
+				Value: fi.String(v),
+			})
+		}
 
-	tf := &terraformSecurityGroup{
-		Name:        e.Name,
-		VPCID:       e.VPC.TerraformLink(),
-		Description: e.Description,
-		Tags:        e.Tags,
+		return t.RenderResource("aws_security_group", *e.Name, tf)
+	} else {
+		tf := &terraformSecurityGroup{
+			Name:        e.Name,
+			VPCID:       e.VPC.TerraformLink(),
+			Description: e.Description,
+			Tags:        e.Tags,
+		}
+
+		return t.RenderResource("aws_security_group", *e.Name, tf)
 	}
-
-	return t.RenderResource("aws_security_group", *e.Name, tf)
 }
 
 func (e *SecurityGroup) TerraformLink() *terraform.Literal {

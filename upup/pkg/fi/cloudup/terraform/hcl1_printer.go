@@ -23,72 +23,12 @@ import (
 
 	"github.com/hashicorp/hcl/hcl/ast"
 	hcl_printer "github.com/hashicorp/hcl/hcl/printer"
+
 	"k8s.io/klog"
 	"k8s.io/kops/pkg/featureflag"
 )
 
-const safeChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
-
-// sanitizer fixes up an invalid HCL AST, as produced by the HCL parser for JSON
-type astSanitizer struct {
-}
-
-// output prints creates b printable HCL output and returns it.
-func (v *astSanitizer) visit(n interface{}) {
-	switch t := n.(type) {
-	case *ast.File:
-		v.visit(t.Node)
-	case *ast.ObjectList:
-		var index int
-		for {
-			if index == len(t.Items) {
-				break
-			}
-
-			v.visit(t.Items[index])
-			index++
-		}
-	case *ast.ObjectKey:
-	case *ast.ObjectItem:
-		v.visitObjectItem(t)
-	case *ast.LiteralType:
-	case *ast.ListType:
-	case *ast.ObjectType:
-		v.visit(t.List)
-	default:
-		klog.Warningf(" unknown type: %T\n", n)
-	}
-
-}
-
-func (v *astSanitizer) visitObjectItem(o *ast.ObjectItem) {
-	for i, k := range o.Keys {
-		if i == 0 {
-			text := k.Token.Text
-			if text != "" && text[0] == '"' && text[len(text)-1] == '"' {
-				v := text[1 : len(text)-1]
-				safe := true
-				for _, c := range v {
-					if !strings.ContainsRune(safeChars, c) {
-						safe = false
-						break
-					}
-				}
-				if safe {
-					k.Token.Text = v
-				}
-			}
-
-		}
-	}
-
-	// A hack so that Assign.IsValid is true, so that the printer will output =
-	o.Assign.Line = 1
-
-	v.visit(o.Val)
-}
-
-func hclPrint(node ast.Node) ([]byte, error) {
+func hcl1Print(node ast.Node) ([]byte, error) {
 	var sanitizer astSanitizer
 	sanitizer.visit(node)
 
