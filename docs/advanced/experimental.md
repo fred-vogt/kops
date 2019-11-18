@@ -10,6 +10,7 @@ The following experimental features are currently available:
 * `+EnableExternalDNS` - Enable external-dns with default settings (ingress sources only).
 * `+VPCSkipEnableDNSSupport` - Enables creation of a VPC that does not need DNSSupport enabled.
 * `+SkipTerraformFormat` - Do not `terraform fmt` the generated terraform files.
+* `+Terraform012` - Use HCL2 output for terraform versions 0.12+.
 * `+EnableExternalCloudController` - Enables the use of cloud-controller-manager introduced in v1.7.
 * `+EnableSeparateConfigBase` - Allow a config-base that is different from the state store.
 * `+SpecOverrideFlag` - Allow setting spec values on `kops create`.
