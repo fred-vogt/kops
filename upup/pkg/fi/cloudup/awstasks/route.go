@@ -26,6 +26,7 @@ import (
 	"k8s.io/kops/upup/pkg/fi/cloudup/awsup"
 	"k8s.io/kops/upup/pkg/fi/cloudup/cloudformation"
 	"k8s.io/kops/upup/pkg/fi/cloudup/terraform"
+	"k8s.io/kops/pkg/featureflag"
 )
 
 //go:generate fitask -type=Route
@@ -246,7 +247,11 @@ func (_ *Route) RenderTerraform(t *terraform.TerraformTarget, a, e, changes *Rou
 		tf.InstanceID = e.Instance.TerraformLink()
 	}
 
-	return t.RenderResource("aws_route", *e.Name, tf)
+	if featureflag.Terraform012.Enabled() {
+		return t.RenderResource("aws_route", "default-" + *e.Name, tf)
+	} else {
+		return t.RenderResource("aws_route", *e.Name, tf)
+	}
 }
 
 type cloudformationRoute struct {
