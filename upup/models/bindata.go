@@ -177,6 +177,7 @@ spec:
         - --config=/etc/aws-iam-authenticator/config.yaml
         - --state-dir=/var/aws-iam-authenticator
         - --kubeconfig-pregenerated=true
+        - --backend-mode={{ or .Authentication.Aws.BackendMode "MountedFile" }}
 
         resources:
           requests:
@@ -354,6 +355,8 @@ spec:
         - --config=/etc/aws-iam-authenticator/config.yaml
         - --state-dir=/var/aws-iam-authenticator
         - --kubeconfig-pregenerated=true
+        - --backend-mode={{ or .Authentication.Aws.BackendMode "MountedFile" }}
+
         resources:
           requests:
             memory: {{ or .Authentication.Aws.MemoryRequest "20Mi" }}
