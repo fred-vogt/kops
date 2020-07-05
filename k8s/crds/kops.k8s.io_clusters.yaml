@@ -135,6 +135,10 @@ spec:
                 properties:
                   aws:
                     properties:
+                      backendMode:
+                        description: BackendMode is the AWS IAM Authenticator backend
+                          to use. Default MountedFile
+                        type: string
                       cpuLimit:
                         anyOf:
                         - type: integer
