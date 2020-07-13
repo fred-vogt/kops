@@ -55,7 +55,7 @@ spec:
     rbac: {}
 ```
 
-The creation of a AWS IAM authenticator config as a ConfigMap is also required.
+By default the creation of a AWS IAM authenticator config as a ConfigMap is also required.
 For more details on AWS IAM authenticator please visit [kubernetes-sigs/aws-iam-authenticator](https://github.com/kubernetes-sigs/aws-iam-authenticator)
 
 Example config:
@@ -111,6 +111,14 @@ data:
         username: alice
         groups:
         - system:masters
+```
+
+It is also possible to configure alternative backend modes for aws-iam-authenticator. The BackendMode configuration option allows defining multiple backends in a comma separated string, which aws-iam-authenticator will attempt to use in order of preference. This requires an aws-iam-authenticator image >= 0.5.0 For more information see [usergroup-mappings](https://github.com/kubernetes-sigs/aws-iam-authenticator#4-create-iam-roleuser-to-kubernetes-usergroup-mappings)
+
+```yaml
+authentication:
+  aws:
+    BackendMode: CRD,MountedFile
 ```
 
 ### Creating a new cluster with IAM Authenticator on.
