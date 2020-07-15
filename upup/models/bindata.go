@@ -190,17 +190,21 @@ spec:
             cpu: {{ or .Authentication.Aws.CPULimit "100m" }}
 
         volumeMounts:
+        {{- if or (not .Authentication.Aws.BackendMode) (contains "MountedFile" .Authentication.Aws.BackendMode) }}
         - name: config
           mountPath: /etc/aws-iam-authenticator/
+        {{- end }}
         - name: state
           mountPath: /var/aws-iam-authenticator/
         - name: output
           mountPath: /etc/kubernetes/aws-iam-authenticator/
 
       volumes:
+      {{- if or (not .Authentication.Aws.BackendMode) (contains "MountedFile" .Authentication.Aws.BackendMode) }}
       - name: config
         configMap:
           name: aws-iam-authenticator
+      {{- end }}
       - name: output
         hostPath:
           path: /srv/kubernetes/aws-iam-authenticator/
@@ -375,16 +379,20 @@ spec:
             port: 21362
             scheme: HTTPS
         volumeMounts:
+        {{- if or (not .Authentication.Aws.BackendMode) (contains "MountedFile" .Authentication.Aws.BackendMode) }}
         - name: config
           mountPath: /etc/aws-iam-authenticator/
+        {{- end }}
         - name: state
           mountPath: /var/aws-iam-authenticator/
         - name: output
           mountPath: /etc/kubernetes/aws-iam-authenticator/
       volumes:
+      {{- if or (not .Authentication.Aws.BackendMode) (contains "MountedFile" .Authentication.Aws.BackendMode) }}
       - name: config
         configMap:
           name: aws-iam-authenticator
+      {{- end }}
       - name: output
         hostPath:
           path: /srv/kubernetes/aws-iam-authenticator/
